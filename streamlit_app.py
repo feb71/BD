@@ -7,13 +7,12 @@ from io import BytesIO
 st.set_page_config(page_title="Streamlit App", layout="wide", initial_sidebar_state="expanded")
 
 # Funksjon for å lese fakturanummer fra PDF
-
 def get_invoice_number(file):
     try:
         with pdfplumber.open(file) as pdf:
             for page in pdf.pages:
                 text = page.extract_text()
-                match = re.search(r"Fakturanummer\\s*[:\\-]?\\s*(\\d+)", text, re.IGNORECASE)
+                match = re.search(r"Fakturanummer\s*[:\-]?\s*(\d+)", text, re.IGNORECASE)
                 if match:
                     return match.group(1)
         return None
@@ -21,9 +20,8 @@ def get_invoice_number(file):
         st.error(f"Kunne ikke lese fakturanummer fra PDF: {e}")
         return None
 
-# Ny, robust funksjon som håndterer valgfri rabatt-kolonne
-# Varenummer + Fakturanummer = UnikID
-
+# Oppdatert funksjon for å lese PDF-faktura fra Brødrene Dahl
+# Håndterer valgfri rabattkolonne og lager UnikID av fakturanummer og varenummer
 def extract_data_from_pdf(file, doc_type, invoice_number=None):
     try:
         with pdfplumber.open(file) as pdf:
@@ -37,7 +35,7 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
 
                 lines = text.split('\n')
                 for line in lines:
-                    # Oppdag overskriften
+                    # Oppdag overskriften (Linje, Artikkel, Beløp)
                     if "Linje" in line and "Artikkel" in line and "Beløp" in line:
                         start_reading = True
                         continue
@@ -52,55 +50,50 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
                         if not line_num.isdigit():
                             continue
 
-                        # 2) Artikkelnummer
+                        # 2) Artikkelnummer (7 siffer)
                         item_number = tokens[1]
-                        # Sjekk at artikkelnummeret er 7 siffer
                         if not (len(item_number) == 7 and item_number.isdigit()):
                             continue
 
-                        # Siste token er totalpris
-                        total_str = tokens[-1].replace('.', '').replace(',', '.')
-
-                        # Vi sjekker om nest siste token er rabatt eller enhetspris
-                        second_last = tokens[-2]
-
+                        # Funksjon for å teste om streng kan være et tall
                         def is_number(s):
                             try:
                                 float(s.replace(',', '.').replace('.', ''))
                                 return True
-                            except:
+                            except ValueError:
                                 return False
 
+                        # Siste token i linjen -> totalpris
+                        total_str = tokens[-1].replace('.', '').replace(',', '.')
+                        # Nest siste token -> enten rabatt eller enhetspris
+                        second_last = tokens[-2]
                         discount = None
 
+                        # Sjekk om nest siste er tall
                         if is_number(second_last):
-                            # Tredje siste kan være enhetspris eller rabatt
+                            # Tredje siste kan da være enhetspris eller rabatt
                             third_last = tokens[-3]
                             if is_number(third_last):
-                                # Da har vi rabatten = second_last,
-                                # enhetspris = third_last,
-                                # fjerde siste = unit,
-                                # femte siste = quantity
+                                # Format: ... <quantity> <unit> <enhetspris> <rabatt> <total>
                                 discount_str = second_last.replace('.', '').replace(',', '.')
                                 unit_price_str = third_last.replace('.', '').replace(',', '.')
                                 unit = tokens[-4]
                                 quantity_str = tokens[-5].replace('.', '').replace(',', '.')
-                                desc_tokens = tokens[2:-5]
 
-                                discount = float(discount_str)
-
+                                discount = float(discount_str)  # vi tar den med
                                 try:
                                     unit_price = float(unit_price_str)
                                     quantity = float(quantity_str)
                                     total_price = float(total_str)
                                 except ValueError:
                                     continue
+
+                                desc_tokens = tokens[2:-5]
                             else:
-                                # Ingen rabatt, second_last er enhetspris,
-                                unit_price_str = second_last
+                                # Format: ... <quantity> <unit> <enhetspris> <total>
+                                unit_price_str = second_last.replace('.', '').replace(',', '.')
                                 unit = tokens[-3]
                                 quantity_str = tokens[-4].replace('.', '').replace(',', '.')
-                                desc_tokens = tokens[2:-4]
 
                                 try:
                                     unit_price = float(unit_price_str)
@@ -108,8 +101,10 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
                                     total_price = float(total_str)
                                 except ValueError:
                                     continue
+
+                                desc_tokens = tokens[2:-4]
                         else:
-                            # Nest siste er ikke tall => format avviker
+                            # Nest siste er ikke tall -> hopp over
                             continue
 
                         description = " ".join(desc_tokens)
@@ -125,7 +120,6 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
                             "Totalt pris": total_price,
                             "Type": doc_type
                         }
-
                         if discount is not None:
                             data_row["Rabatt"] = discount
 
@@ -137,30 +131,36 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
         st.error(f"Kunne ikke lese data fra PDF: {e}")
         return pd.DataFrame()
 
-
+# Konverterer DataFrame til Excel
 def convert_df_to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-
 def main():
-    st.title("Les og sammenlign faktura med tilbud fra Brødrene Dahl")
+    st.title("Sammenlign Faktura mot Tilbud")
 
-    invoice_files = st.file_uploader("Last opp fakturaer fra Brødrene Dahl", type="pdf", accept_multiple_files=True)
-    offer_file = st.file_uploader("Last opp tilbud fra Brødrene Dahl (Excel)", type="xlsx")
+    col1, col2 = st.columns([1,3])
+
+    with col1:
+        # Last opp PDF-filer (faktura) og Excel-fil (tilbud)
+        invoice_files = st.file_uploader("Last opp fakturaer (PDF)", type="pdf", accept_multiple_files=True)
+        offer_file = st.file_uploader("Last opp tilbud (Excel)", type="xlsx")
 
     if invoice_files and offer_file:
         all_invoice_data = pd.DataFrame()
 
+        # Les PDF-filer
         for invoice_file in invoice_files:
             invoice_number = get_invoice_number(invoice_file)
-
             if invoice_number:
+                with col1:
+                    st.write(f"Fakturanummer funnet: {invoice_number}")
                 invoice_data = extract_data_from_pdf(invoice_file, "Faktura", invoice_number)
                 all_invoice_data = pd.concat([all_invoice_data, invoice_data], ignore_index=True)
 
+        # Les tilbud fra Excel
         offer_data = pd.read_excel(offer_file)
         offer_data.rename(columns={
             'VARENR': 'Varenummer',
@@ -171,11 +171,12 @@ def main():
             'TOTALPRIS': 'Totalt pris'
         }, inplace=True)
 
-        # For å unngå merge-feil
+        # Tvinger Varenummer til samme datatype (string)
         all_invoice_data["Varenummer"] = all_invoice_data["Varenummer"].astype(str)
         offer_data["Varenummer"] = offer_data["Varenummer"].astype(str)
 
         if not all_invoice_data.empty and not offer_data.empty:
+            # Slå sammen data på Varenummer
             merged_data = pd.merge(
                 offer_data,
                 all_invoice_data,
@@ -184,42 +185,64 @@ def main():
                 suffixes=('_Tilbud', '_Faktura')
             )
 
-            st.subheader("Sammenslått tabell")
-            st.dataframe(merged_data)
+            # Gjør kolonner numeriske for sammenligning
+            merged_data["Antall_Faktura"] = pd.to_numeric(merged_data["Antall_Faktura"], errors='coerce')
+            merged_data["Antall_Tilbud"] = pd.to_numeric(merged_data["Antall_Tilbud"], errors='coerce')
+            merged_data["Enhetspris_Faktura"] = pd.to_numeric(merged_data["Enhetspris_Faktura"], errors='coerce')
+            merged_data["Enhetspris_Tilbud"] = pd.to_numeric(merged_data["Enhetspris_Tilbud"], errors='coerce')
 
-            # Opprett tabell 1: Varenummer som finnes i tilbudet
-            table_in_offer = merged_data[~merged_data['Beskrivelse_Tilbud'].isna()]
+            # Beregn avvik
+            merged_data["Avvik_Antall"] = merged_data["Antall_Faktura"] - merged_data["Antall_Tilbud"]
+            merged_data["Avvik_Enhetspris"] = merged_data["Enhetspris_Faktura"] - merged_data["Enhetspris_Tilbud"]
+            merged_data["Prosentvis_økning"] = (
+                (merged_data["Enhetspris_Faktura"] - merged_data["Enhetspris_Tilbud"]) 
+                / merged_data["Enhetspris_Tilbud"] * 100
+            )
 
-            # Opprett tabell 2: Varenummer som IKKE finnes i tilbudet
-            table_not_in_offer = merged_data[merged_data['Beskrivelse_Tilbud'].isna()]
+            # Tabell: Varer som finnes i tilbudet (der Enhetspris_Tilbud finnes)
+            table_in_offer = merged_data[ merged_data["Enhetspris_Tilbud"].notna() ]
 
-            st.subheader("Varer som finnes i tilbudet")
-            st.dataframe(table_in_offer)
+            # Tabell: Varer som IKKE finnes i tilbudet (der Enhetspris_Tilbud er NaN)
+            table_not_in_offer = merged_data[ merged_data["Enhetspris_Tilbud"].isna() ]
 
-            st.subheader("Varer som IKKE finnes i tilbudet")
-            st.dataframe(table_not_in_offer)
+            with col2:
+                st.subheader("Alle sammenlignede data:")
+                st.dataframe(merged_data)
+
+                st.subheader("Varer som finnes i tilbudet:")
+                st.dataframe(table_in_offer)
+
+                st.subheader("Varer som IKKE finnes i tilbudet:")
+                st.dataframe(table_not_in_offer)
 
             # Gjør dem nedlastbare
-            excel_data_1 = convert_df_to_excel(table_in_offer)
-            excel_data_2 = convert_df_to_excel(table_not_in_offer)
+            excel_data_merged = convert_df_to_excel(merged_data)
+            excel_data_in = convert_df_to_excel(table_in_offer)
+            excel_data_out = convert_df_to_excel(table_not_in_offer)
 
-            st.download_button(
-                label="Last ned (Excel) - Varer i tilbudet",
-                data=excel_data_1,
-                file_name="varer_i_tilbudet.xlsx",
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            )
-
-            st.download_button(
-                label="Last ned (Excel) - Varer IKKE i tilbudet",
-                data=excel_data_2,
-                file_name="varer_ikke_i_tilbudet.xlsx",
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            )
+            with col1:
+                st.download_button(
+                    label="Last ned all data (Excel)",
+                    data=excel_data_merged,
+                    file_name="alle_varer.xlsx",
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
+                st.download_button(
+                    label="Last ned varer i tilbudet (Excel)",
+                    data=excel_data_in,
+                    file_name="varer_i_tilbudet.xlsx",
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
+                st.download_button(
+                    label="Last ned varer IKKE i tilbudet (Excel)",
+                    data=excel_data_out,
+                    file_name="varer_ikke_i_tilbudet.xlsx",
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
         else:
-            st.error("Ingen data funnet i de opplastede filene.")
+            st.error("Ingen data funnet i enten PDF- eller Excel-filen. Sjekk at de inneholder riktige kolonner/verdier.")
     else:
-        st.info("Vennligst last opp både faktura (PDF) og tilbud (Excel).")
+        st.info("Vennligst last opp både faktura (PDF) og tilbud (Excel) for å sammenligne.")
 
 if __name__ == "__main__":
     main()
