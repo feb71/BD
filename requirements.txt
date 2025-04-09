@@ -1,0 +1,5 @@
+streamlit
+pdfplumber
+pandas
+openpyxl  # For Excel-funksjonalitet
+xlsxwriter  # For å skrive til Excel
