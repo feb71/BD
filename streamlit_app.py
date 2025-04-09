@@ -21,7 +21,8 @@ def get_invoice_number(file):
         return None
 
 # Funksjon for å lese PDF-filen og hente ut relevante data
-def extract_data_from_pdf(file, doc_type, invoice_number=None):
+# Tilpasset funksjon for faktura fra Brødrene Dahl AS
+def extract_data_brodrene_dahl(file, invoice_number=None):
     try:
         with pdfplumber.open(file) as pdf:
             data = []
@@ -30,48 +31,48 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
             for page in pdf.pages:
                 text = page.extract_text()
                 if text is None:
-                    st.error(f"Ingen tekst funnet på side {page.page_number} i PDF-filen.")
                     continue
-                
+
                 lines = text.split('\n')
                 for line in lines:
-                    if doc_type == "Faktura" and "Artikkel" in line:
+                    if re.search(r"Linje\s+Artikkel.*BeløpBeskrivelse", line):
                         start_reading = True
                         continue
 
                     if start_reading:
                         columns = line.split()
-                        if len(columns) >= 5:
+                        if len(columns) >= 7:
+                            line_num = columns[0]
                             item_number = columns[1]
-                            if not item_number.isdigit():
-                                continue
 
-                            description = " ".join(columns[2:-3])
-                            try:
-                                quantity = float(columns[-3].replace('.', '').replace(',', '.')) if columns[-3].replace('.', '').replace(',', '').isdigit() else columns[-3]
-                                unit_price = float(columns[-2].replace('.', '').replace(',', '.')) if columns[-2].replace('.', '').replace(',', '').isdigit() else columns[-2]
-                                total_price = float(columns[-1].replace('.', '').replace(',', '.')) if columns[-1].replace('.', '').replace(',', '').isdigit() else columns[-1]
-                            except ValueError as e:
-                                st.error(f"Kunne ikke konvertere til flyttall: {e}")
-                                continue
+                            # Finner posisjonene til antall, enhet, enhetspris, totalpris
+                            total_price = columns[-1].replace('.', '').replace(',', '.')
+                            unit_price = columns[-2].replace('.', '').replace(',', '.')
+                            unit = columns[-3]
+                            quantity = columns[-4].replace('.', '').replace(',', '.')
+
+                            # Beskrivelse er alt mellom varenummer og antall
+                            description = " ".join(columns[2:-4])
 
                             unique_id = f"{invoice_number}_{item_number}" if invoice_number else item_number
+
                             data.append({
                                 "UnikID": unique_id,
                                 "Varenummer": item_number,
                                 "Beskrivelse_Faktura": description,
-                                "Antall_Faktura": quantity,
-                                "Enhetspris_Faktura": unit_price,
-                                "Totalt pris": total_price,
-                                "Type": doc_type
+                                "Antall_Faktura": float(quantity),
+                                "Enhet_Faktura": unit,
+                                "Enhetspris_Faktura": float(unit_price),
+                                "Totalt pris": float(total_price),
+                                "Type": "Faktura"
                             })
-            if len(data) == 0:
-                st.error("Ingen data ble funnet i PDF-filen.")
-                
+
             return pd.DataFrame(data)
+
     except Exception as e:
         st.error(f"Kunne ikke lese data fra PDF: {e}")
         return pd.DataFrame()
+
 
 # Funksjon for å dele opp beskrivelsen basert på siste elementer
 def split_description(data, doc_type):
