@@ -79,11 +79,12 @@ def convert_df_to_excel(df):
 
 # Hovedfunksjon for Streamlit-appen
 def main():
-    st.title("Les og eksportér fakturadata fra Brødrene Dahl")
+    st.title("Les og sammenlign faktura med tilbud fra Brødrene Dahl")
 
     invoice_files = st.file_uploader("Last opp fakturaer fra Brødrene Dahl", type="pdf", accept_multiple_files=True)
+    offer_file = st.file_uploader("Last opp tilbud fra Brødrene Dahl (Excel)", type="xlsx")
 
-    if invoice_files:
+    if invoice_files and offer_file:
         all_invoice_data = pd.DataFrame()
 
         for invoice_file in invoice_files:
@@ -93,19 +94,31 @@ def main():
                 invoice_data = extract_data_from_pdf(invoice_file, "Faktura", invoice_number)
                 all_invoice_data = pd.concat([all_invoice_data, invoice_data], ignore_index=True)
 
-        if not all_invoice_data.empty:
-            st.dataframe(all_invoice_data)
+        offer_data = pd.read_excel(offer_file)
+        offer_data.rename(columns={
+            'VARENR': 'Varenummer',
+            'BESKRIVELSE': 'Beskrivelse_Tilbud',
+            'ANTALL': 'Antall_Tilbud',
+            'ENHET': 'Enhet_Tilbud',
+            'ENHETSPRIS': 'Enhetspris_Tilbud',
+            'TOTALPRIS': 'Totalt pris'
+        }, inplace=True)
 
-            excel_data = convert_df_to_excel(all_invoice_data)
+        if not all_invoice_data.empty and not offer_data.empty:
+            merged_data = pd.merge(offer_data, all_invoice_data, on="Varenummer", how='outer', suffixes=('_Tilbud', '_Faktura'))
+
+            st.dataframe(merged_data)
+
+            excel_data = convert_df_to_excel(merged_data)
 
             st.download_button(
-                label="Last ned fakturadata som Excel",
+                label="Last ned sammenlignet data som Excel",
                 data=excel_data,
-                file_name="faktura_data.xlsx",
+                file_name="sammenlignet_data.xlsx",
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
         else:
-            st.error("Ingen data funnet i de opplastede PDF-filene.")
+            st.error("Ingen data funnet i de opplastede filene.")
 
 if __name__ == "__main__":
     main()
