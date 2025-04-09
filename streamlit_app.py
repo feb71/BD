@@ -21,6 +21,8 @@ def get_invoice_number(file):
         return None
 
 # Tilpasset funksjon for å lese PDF-faktura fra Brødrene Dahl AS
+# Hopp over linjer hvis 'Artikkel' ikke er 7 siffer.
+
 def extract_data_from_pdf(file, doc_type, invoice_number=None):
     try:
         with pdfplumber.open(file) as pdf:
@@ -34,26 +36,39 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
 
                 lines = text.split('\n')
                 for line in lines:
-                    # Oppdag overskriftslinjen
+                    # Oppdag overskriften (Linje, Artikkel, Beløp)
                     if "Linje" in line and "Artikkel" in line and "Beløp" in line:
                         start_reading = True
                         continue
 
                     if start_reading:
                         columns = line.split()
-                        if len(columns) >= 7:
-                            line_num = columns[0]
-                            item_number = columns[1]
 
-                            total_price = columns[-1].replace('.', '').replace(',', '.')
-                            unit_price = columns[-2].replace('.', '').replace(',', '.')
-                            unit = columns[-3]
-                            quantity = columns[-4].replace('.', '').replace(',', '.')
+                        # Hopp over linjer med for få kolonner
+                        if len(columns) < 7:
+                            continue
 
-                            description = " ".join(columns[2:-4])
+                        line_num = columns[0]     # Linjenummer
+                        item_number = columns[1]  # Artikkelnummer
 
-                            unique_id = f"{invoice_number}_{item_number}" if invoice_number else item_number
+                        # Sjekk at linjenummer faktisk er siffer
+                        if not line_num.isdigit():
+                            continue
 
+                        # Sjekk at artikkelnummeret er 7 siffer
+                        if not (len(item_number) == 7 and item_number.isdigit()):
+                            continue
+
+                        total_price = columns[-1].replace('.', '').replace(',', '.')
+                        unit_price = columns[-2].replace('.', '').replace(',', '.')
+                        unit = columns[-3]
+                        quantity = columns[-4].replace('.', '').replace(',', '.')
+
+                        description = " ".join(columns[2:-4])
+
+                        unique_id = f"{invoice_number}_{item_number}" if invoice_number else item_number
+
+                        try:
                             data.append({
                                 "UnikID": unique_id,
                                 "Varenummer": item_number,
@@ -64,6 +79,9 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
                                 "Totalt pris": float(total_price),
                                 "Type": doc_type
                             })
+                        except ValueError:
+                            # Hopp over linjen om konvertering feiler
+                            continue
 
             return pd.DataFrame(data)
 
@@ -72,6 +90,7 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
         return pd.DataFrame()
 
 # Funksjon for å konvertere DataFrame til en Excel-fil
+
 def convert_df_to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -79,6 +98,7 @@ def convert_df_to_excel(df):
     return output.getvalue()
 
 # Hovedfunksjon for Streamlit-appen
+
 def main():
     st.title("Les og sammenlign faktura med tilbud fra Brødrene Dahl")
 
@@ -96,7 +116,6 @@ def main():
                 all_invoice_data = pd.concat([all_invoice_data, invoice_data], ignore_index=True)
 
         offer_data = pd.read_excel(offer_file)
-        # Tilpass kolonnenavn
         offer_data.rename(columns={
             'VARENR': 'Varenummer',
             'BESKRIVELSE': 'Beskrivelse_Tilbud',
@@ -106,19 +125,13 @@ def main():
             'TOTALPRIS': 'Totalt pris'
         }, inplace=True)
 
-        if not all_invoice_data.empty and not offer_data.empty:
-            # ---- Løsningen på feilen: ----
-            all_invoice_data['Varenummer'] = all_invoice_data['Varenummer'].astype(str)
-            offer_data['Varenummer'] = offer_data['Varenummer'].astype(str)
-            # ------------------------------
+        # Hvis du får feilmelding om ulike datatyper ved merge,
+        # kan du kaste kolonnen til str:
+        all_invoice_data['Varenummer'] = all_invoice_data['Varenummer'].astype(str)
+        offer_data['Varenummer'] = offer_data['Varenummer'].astype(str)
 
-            merged_data = pd.merge(
-                offer_data,
-                all_invoice_data,
-                on="Varenummer",
-                how='outer',
-                suffixes=('_Tilbud', '_Faktura')
-            )
+        if not all_invoice_data.empty and not offer_data.empty:
+            merged_data = pd.merge(offer_data, all_invoice_data, on="Varenummer", how='outer', suffixes=('_Tilbud', '_Faktura'))
 
             st.dataframe(merged_data)
 
@@ -132,6 +145,8 @@ def main():
             )
         else:
             st.error("Ingen data funnet i de opplastede filene.")
+    else:
+        st.info("Vennligst last opp både faktura (PDF) og tilbud (Excel).")
 
 if __name__ == "__main__":
     main()
