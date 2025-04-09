@@ -20,7 +20,7 @@ def get_invoice_number(file):
         st.error(f"Kunne ikke lese fakturanummer fra PDF: {e}")
         return None
 
-# Korrekt tilpasset funksjon for å lese PDF-faktura fra Brødrene Dahl AS
+# Tilpasset funksjon for å lese PDF-faktura fra Brødrene Dahl AS
 def extract_data_from_pdf(file, doc_type, invoice_number=None):
     try:
         with pdfplumber.open(file) as pdf:
@@ -34,7 +34,7 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
 
                 lines = text.split('\n')
                 for line in lines:
-                    if re.search(r"Linje\s+Artikkel.*BeløpBeskrivelse", line):
+                    if "Linje" in line and "Artikkel" in line and "Beløp" in line:
                         start_reading = True
                         continue
 
@@ -69,6 +69,7 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
     except Exception as e:
         st.error(f"Kunne ikke lese data fra PDF: {e}")
         return pd.DataFrame()
+
 
 # Funksjon for å konvertere DataFrame til en Excel-fil
 def convert_df_to_excel(df):
