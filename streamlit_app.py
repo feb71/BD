@@ -20,7 +20,7 @@ def get_invoice_number(file):
         st.error(f"Kunne ikke lese fakturanummer fra PDF: {e}")
         return None
 
-# Tilpasset funksjon for å lese PDF-faktura fra Brødrene Dahl AS
+# Tilpasset funksjon for å lese PDF-faktura fra Brødrene Dahl AS (robust versjon)
 def extract_data_from_pdf(file, doc_type, invoice_number=None):
     try:
         with pdfplumber.open(file) as pdf:
@@ -34,13 +34,24 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
 
                 lines = text.split('\n')
                 for line in lines:
+                    # Sjekk om vi er på overskriftslinjen
                     if "Linje" in line and "Artikkel" in line and "Beløp" in line:
                         start_reading = True
                         continue
 
                     if start_reading:
                         columns = line.split()
-                        if len(columns) >= 7:
+
+                        # For å unngå at vi prøver å parse tekstlinjer med for få kolonner
+                        if len(columns) < 7:
+                            continue
+
+                        # Pass på at første kolonne er siffer (linjenummer)
+                        if not columns[0].isdigit():
+                            continue
+
+                        # Pakk konvertering til float i try/except
+                        try:
                             line_num = columns[0]
                             item_number = columns[1]
 
@@ -51,18 +62,26 @@ def extract_data_from_pdf(file, doc_type, invoice_number=None):
 
                             description = " ".join(columns[2:-4])
 
+                            # Konverter til float
+                            total_price = float(total_price)
+                            unit_price = float(unit_price)
+                            quantity = float(quantity)
+
                             unique_id = f"{invoice_number}_{item_number}" if invoice_number else item_number
 
                             data.append({
                                 "UnikID": unique_id,
                                 "Varenummer": item_number,
                                 "Beskrivelse_Faktura": description,
-                                "Antall_Faktura": float(quantity),
+                                "Antall_Faktura": quantity,
                                 "Enhet_Faktura": unit,
-                                "Enhetspris_Faktura": float(unit_price),
-                                "Totalt pris": float(total_price),
+                                "Enhetspris_Faktura": unit_price,
+                                "Totalt pris": total_price,
                                 "Type": doc_type
                             })
+                        except ValueError:
+                            # Hopper over linjen om konvertering feiler
+                            continue
 
             return pd.DataFrame(data)
 
@@ -94,6 +113,7 @@ def main():
                 invoice_data = extract_data_from_pdf(invoice_file, "Faktura", invoice_number)
                 all_invoice_data = pd.concat([all_invoice_data, invoice_data], ignore_index=True)
 
+        # Les tilbudet fra Excel-filen
         offer_data = pd.read_excel(offer_file)
         offer_data.rename(columns={
             'VARENR': 'Varenummer',
@@ -104,13 +124,21 @@ def main():
             'TOTALPRIS': 'Totalt pris'
         }, inplace=True)
 
+        # Sjekk at både PDF-data og tilbud har innhold
         if not all_invoice_data.empty and not offer_data.empty:
-            merged_data = pd.merge(offer_data, all_invoice_data, on="Varenummer", how='outer', suffixes=('_Tilbud', '_Faktura'))
+            # Slå sammen basert på 'Varenummer'
+            merged_data = pd.merge(
+                offer_data,
+                all_invoice_data,
+                on="Varenummer",
+                how='outer',
+                suffixes=('_Tilbud', '_Faktura')
+            )
 
             st.dataframe(merged_data)
 
+            # Gjør det mulig å laste ned resultatet
             excel_data = convert_df_to_excel(merged_data)
-
             st.download_button(
                 label="Last ned sammenlignet data som Excel",
                 data=excel_data,
@@ -119,6 +147,8 @@ def main():
             )
         else:
             st.error("Ingen data funnet i de opplastede filene.")
+    else:
+        st.info("Vennligst last opp både faktura(er) (PDF) og tilbud (Excel).")
 
 if __name__ == "__main__":
     main()
