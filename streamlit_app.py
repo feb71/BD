@@ -22,7 +22,7 @@ def get_invoice_number(file):
 
 # Funksjon for å lese PDF-filen og hente ut relevante data
 # Tilpasset funksjon for faktura fra Brødrene Dahl AS
-def extract_data_brodrene_dahl(file, invoice_number=None):
+def extract_data_from_pdf(file, invoice_number=None):
     try:
         with pdfplumber.open(file) as pdf:
             data = []
